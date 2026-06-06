@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>HiRO CRM — DMV Territory</title>
+<title>HIRO-249 — DMV Territory</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 
@@ -17,7 +17,7 @@
   import { getDatabase, ref, set, onValue, remove, update }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
-const firebaseConfig = {
+  const firebaseConfig = {
   apiKey: "AIzaSyDbNYsUJLb4fcHXDlC9Pk7FkpEtGSDHRvI",
   authDomain: "hiro-crm-249.firebaseapp.com",
   databaseURL: "https://hiro-crm-249-default-rtdb.firebaseio.com",
@@ -316,10 +316,12 @@ input, select, textarea, button { font-family: var(--sans); }
   <div id="loading-bar" class="loading-bar hide"></div>
 
   <header class="topbar">
-    <div class="logo"><span class="logo-hex">⬡</span> HIRO CRM</div>
+    <div class="logo"><span class="logo-hex">⬡</span> HIRO-249</div>
     <nav class="nav-tabs">
       <button class="nav-tab active" onclick="showView('dashboard')">Dashboard</button>
       <button class="nav-tab" onclick="showView('leads')">Leads</button>
+      <button class="nav-tab" onclick="showView('today')">Today <span id="today-count-badge" style="background:var(--red);color:#fff;border-radius:20px;padding:1px 7px;font-size:10px;margin-left:4px;display:none"></span></button>
+      <button class="nav-tab" onclick="showView('installs')">Installs</button>
     </nav>
     <div class="topbar-right">
       <div class="sync-dot" id="sync-dot"></div>
@@ -523,6 +525,27 @@ input, select, textarea, button { font-family: var(--sans); }
       </div>
     </div>
 
+    <!-- ── TODAY'S CALLS ──────────────────────────────────────── -->
+    <div id="v-today" class="view">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Today's Calls</div>
+          <div class="page-sub" id="today-date-sub"></div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="today-agent-filter" onchange="renderToday()" style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:7px 12px;font-size:12px;font-family:var(--mono)">
+            <option value="">All agents</option>
+            <option>Don</option><option>Jay</option><option>Damon</option>
+          </select>
+        </div>
+      </div>
+      <div id="today-empty" class="empty-state" style="display:none">
+        <div class="empty-icon">☀️</div>
+        <div class="empty-text">No follow-ups scheduled for today.<br>Set follow-up dates on your leads to see them here.</div>
+      </div>
+      <div id="today-list"></div>
+    </div>
+
   </main>
 </div>
 
@@ -610,10 +633,12 @@ function showView(v) {
   document.querySelectorAll('.view').forEach(function(el) { el.classList.remove('active'); });
   document.getElementById('v-' + v).classList.add('active');
   document.querySelectorAll('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
-  if (v === 'dashboard') document.querySelectorAll('.nav-tab')[0].classList.add('active');
-  if (v === 'leads')     document.querySelectorAll('.nav-tab')[1].classList.add('active');
+  var tabMap = { 'dashboard':0, 'leads':1, 'today':2, 'installs':3 };
+  if (tabMap[v] !== undefined) document.querySelectorAll('.nav-tab')[tabMap[v]].classList.add('active');
   if (v === 'dashboard') refreshDashboard();
   if (v === 'leads')     renderLeads();
+  if (v === 'today')     renderToday();
+  if (v === 'installs')  renderInstalls();
 }
 
 // ── BADGE HTML ─────────────────────────────────────────────────
@@ -848,8 +873,135 @@ function toast(msg, isErr) {
   setTimeout(function(){ t.className = 'toast hide'; }, 2800);
 }
 
+// ── TODAY'S CALLS ──────────────────────────────────────────────
+function renderToday() {
+  var agentFilter = document.getElementById('today-agent-filter').value;
+  var todayLeads = leads.filter(function(l){
+    if (l.followUpDate !== todayStr) return false;
+    if (agentFilter && l.agent !== agentFilter) return false;
+    return true;
+  }).sort(function(a,b){ return a.agent.localeCompare(b.agent); });
+
+  // Update badge on nav tab
+  var badge_el = document.getElementById('today-count-badge');
+  var allTodayCount = leads.filter(function(l){ return l.followUpDate === todayStr; }).length;
+  if (allTodayCount > 0) { badge_el.textContent = allTodayCount; badge_el.style.display = 'inline'; }
+  else { badge_el.style.display = 'none'; }
+
+  // Date subtitle
+  var dateOptions = { weekday:'long', year:'numeric', month:'long', day:'numeric' };
+  document.getElementById('today-date-sub').textContent = new Date().toLocaleDateString('en-US', dateOptions) + ' · ' + todayLeads.length + ' call' + (todayLeads.length !== 1 ? 's' : '') + ' due';
+
+  if (todayLeads.length === 0) {
+    document.getElementById('today-empty').style.display = 'block';
+    document.getElementById('today-list').innerHTML = '';
+    return;
+  }
+  document.getElementById('today-empty').style.display = 'none';
+
+  // Group by agent
+  var grouped = {};
+  todayLeads.forEach(function(l){
+    if (!grouped[l.agent]) grouped[l.agent] = [];
+    grouped[l.agent].push(l);
+  });
+
+  var agentColors = { 'Don':'#E24B4A', 'Jay':'#4a9eff', 'Damon':'#2ecc71' };
+  var html = '';
+  Object.keys(grouped).forEach(function(agent){
+    html += '<div style="margin-bottom:20px">'
+      + '<div style="font-family:var(--mono);font-size:11px;font-weight:700;color:'+agentColors[agent]+';text-transform:uppercase;letter-spacing:0.12em;margin-bottom:10px;display:flex;align-items:center;gap:8px">'
+      + '<span style="width:8px;height:8px;border-radius:50%;background:'+agentColors[agent]+';display:inline-block"></span>'
+      + agent + ' — ' + grouped[agent].length + ' call' + (grouped[agent].length !== 1 ? 's' : '')
+      + '</div>';
+    grouped[agent].forEach(function(l){
+      var sc = STAGES[l.stage] || STAGES['No Answer x3'];
+      html += '<div class="lead-card" onclick="openDetail(\''+l.id+'\')" style="border-left:3px solid '+agentColors[agent]+';margin-bottom:8px">'
+        + '<div class="lead-top"><div class="lead-left">'
+        + '<div class="lead-biz-row"><span class="lead-biz">'+l.bizName+'</span>'
+        + (l.niche ? '<span class="niche-tag">'+l.niche+'</span>' : '')
+        + '</div>'
+        + '<div class="lead-meta-row">'
+        + (l.ownerName ? '<span class="lead-meta-item">👤 '+l.ownerName+'</span>' : '<span class="lead-meta-item" style="color:#ff8c42">⚠ No owner name</span>')
+        + (l.phone ? '<span class="lead-meta-item">📞 '+l.phone+'</span>' : '')
+        + (l.followUpTime ? '<span class="lead-meta-item">🕐 '+l.followUpTime+'</span>' : '')
+        + '</div></div>'
+        + '<div class="lead-right">'+badge(l.stage)
+        + '<div class="lead-actions" onclick="event.stopPropagation()">'
+        + '<button class="btn sm" style="background:var(--red);border-color:transparent;color:#fff" onclick="quickWon(\''+l.id+'\')">✓ Won</button>'
+        + '<button class="btn sm" onclick="openEdit(\''+l.id+'\')">Edit</button>'
+        + '</div></div></div>'
+        + (l.notes ? '<div class="lead-notes-preview">'+l.notes.slice(0,100)+(l.notes.length>100?'…':'')+'</div>' : '')
+        + '</div>';
+    });
+    html += '</div>';
+  });
+  document.getElementById('today-list').innerHTML = html;
+}
+
+function quickWon(id) {
+  window._db.update(id, { stage: 'Closed Won', lastContact: todayStr });
+  toast('Marked Closed Won ✓');
+  setTimeout(function(){ renderToday(); refreshDashboard(); }, 400);
+}
+
+// ── INSTALLS ───────────────────────────────────────────────────
+function renderInstalls() {
+  var installs = leads.filter(function(l){ return l.stage === 'Closed Won'; })
+    .sort(function(a,b){ return (b.createdAt||'').localeCompare(a.createdAt||''); });
+
+  if (installs.length === 0) {
+    document.getElementById('installs-empty').style.display = 'block';
+    document.getElementById('installs-list').innerHTML = '';
+    return;
+  }
+  document.getElementById('installs-empty').style.display = 'none';
+
+  document.getElementById('installs-list').innerHTML = installs.map(function(l){
+    return '<div class="lead-card" style="border-left:3px solid #2ecc71;margin-bottom:8px" onclick="openDetail(\''+l.id+'\')"><div class="lead-top">'
+      + '<div class="lead-left">'
+      + '<div class="lead-biz-row"><span class="lead-biz">'+l.bizName+'</span>'
+      + (l.niche ? '<span class="niche-tag">'+l.niche+'</span>' : '')
+      + '<span style="font-family:var(--mono);font-size:10px;color:#2ecc71;background:rgba(46,204,113,0.1);border:1px solid rgba(46,204,113,0.25);padding:2px 8px;border-radius:20px;margin-left:6px">✓ CLOSED WON</span>'
+      + '</div>'
+      + '<div class="lead-meta-row">'
+      + (l.ownerName ? '<span class="lead-meta-item">👤 '+l.ownerName+'</span>' : '')
+      + (l.phone ? '<span class="lead-meta-item">📞 '+l.phone+'</span>' : '')
+      + (l.address ? '<span class="lead-meta-item">📍 '+l.address+'</span>' : '')
+      + '</div></div>'
+      + '<div class="lead-right" style="flex-direction:column;align-items:flex-end;gap:6px">'
+      + '<div style="font-family:var(--mono);font-size:11px;color:var(--muted)">'+l.cameras+'</div>'
+      + '<div style="font-family:var(--mono);font-size:11px;color:var(--muted)">Agent: '+l.agent+'</div>'
+      + '</div></div>'
+      + (l.address ? '' : '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px;color:#ff8c42;font-family:var(--mono)">⚠ No address on file — add before scheduling Arifi</div>')
+      + '</div>';
+  }).join('');
+}
+
+function exportInstalls() {
+  var installs = leads.filter(function(l){ return l.stage === 'Closed Won'; });
+  var cols = ['bizName','ownerName','phone','address','cameras','financing','agent','createdAt','notes'];
+  var rows = [['Business','Owner','Phone','Address','Bundle','Financing','Agent','Date Won','Notes'].join(',')]
+    .concat(installs.map(function(l){
+      return cols.map(function(c){ return '"'+((l[c]||'').toString().replace(/"/g,'""'))+'"'; }).join(',');
+    }));
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([rows.join('\n')], {type:'text/csv'}));
+  a.download = 'hiro_installs_' + todayStr + '.csv';
+  a.click();
+}
+
+// ── TODAY COUNT BADGE (always visible on nav) ──────────────────
+function updateTodayBadge() {
+  var count = leads.filter(function(l){ return l.followUpDate === todayStr; }).length;
+  var el = document.getElementById('today-count-badge');
+  if (count > 0) { el.textContent = count; el.style.display = 'inline'; }
+  else { el.style.display = 'none'; }
+}
+
 // ── REFRESH ALL ─────────────────────────────────────────────────
-function refreshAll() { refreshDashboard(); renderLeads(); }
+function refreshAll() { refreshDashboard(); renderLeads(); updateTodayBadge(); }
+
 
 // ── BOOT ────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', initApp);
